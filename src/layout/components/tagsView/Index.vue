@@ -1,0 +1,375 @@
+<template>
+  <div
+    id="tags-view-container"
+    class="tags-view-container"
+  >
+    <ScrollPane
+      ref="scrollPaneRef"
+      class="tags-view-wrapper"
+      @scroll="handleScroll"
+    >
+      <router-link
+        v-for="(tag, index) in visitedViews"
+        ref="tag"
+        :key="index"
+        :class="isActive(tag) ? 'active' : ''"
+        :to="{path: tag.path, query: tag.query, fullPath: tag.fullPath}"
+        tag="span"
+        class="tags-view-item"
+        @click.middle="!isAffix(tag)?closeSelectedTag(tag):''"
+        @contextmenu.prevent="openMenu(tag, $event)"
+      >
+        {{ tag.meta.title }}
+        <span
+          v-if="!isAffix(tag)"
+          class="el-icon-close"
+          @click.prevent.stop="closeSelectedTag(tag)"
+        />
+      </router-link>
+    </ScrollPane>
+    <ul
+      v-show="visible"
+      :style="{left: left+'px', top: top+'px'}"
+      class="contextmenu"
+    >
+      <li @click="refreshSelectedTag(selectedTag)">刷新</li>
+      <li v-if="!isAffix(selectedTag)" @click="closeSelectedTag(selectedTag)">关闭</li>
+      <li @click="closeOthersTags">关闭其它</li>
+      <li @click="closeAllTags(selectedTag)">关闭所有</li>
+    </ul>
+  </div>
+</template>
+
+<script lang='ts'>
+import { useStore } from '@/store'
+import { TagView } from '@/store/modules/tagsView'
+import { computed, defineComponent, getCurrentInstance, nextTick, onBeforeMount, reactive, ref, toRefs, watch } from 'vue'
+import { RouteRecordRaw, useRoute, useRouter } from 'vue-router'
+import { constantRoutes } from '@/router'
+import ScrollPane from './ScrollPane.vue'
+export default defineComponent({
+  components: {
+    ScrollPane
+  },
+  name: 'TagsView',
+  setup () {
+    const store = useStore()
+    const router = useRouter()
+    /**
+     * @method getCurrentInstance 获取当前组件实例
+     * const { ctx }  = getCurrentInstance();  //  方式一，这种方式只能在开发环境下使用，生产环境下的ctx将访问不到
+     * const { proxy }  = getCurrentInstance();  //  方式二，此方法在开发环境以及生产环境下都能放到组件上下文对象（推荐）
+     */
+    const instance = getCurrentInstance()
+    const currentRoute = useRoute()
+    const scrollPaneRef = ref(null)
+    const { proxy } = instance as any
+
+    // 关闭/关闭所有调用
+    const toLastView = (visitedViews: TagView[], view: TagView) => {
+      const latestView = visitedViews.slice(-1)[0]
+      console.log(latestView, 'latestView')
+      if (latestView !== undefined && latestView.fullPath !== undefined) {
+        router.push(latestView.fullPath).catch(err => {
+          console.warn(err)
+        })
+      } else {
+      // Default redirect to the home page if there is no tags-view, adjust it if you want
+        if (view.name === 'Dashboard') {
+        // to reload home page
+          router.push({ path: '/redirect' + view.fullPath }).catch(err => {
+            console.warn(err)
+          })
+        } else {
+          router.push('/').catch(err => {
+            console.warn(err)
+          })
+        }
+      }
+    }
+    const state = reactive({
+      visible: false,
+      top: 0,
+      left: 0,
+      selectedTag: {} as TagView,
+      affixTags: [] as TagView[],
+      isActive: (route: TagView) => {
+        return route.path === currentRoute.path
+      },
+      /**
+       * @param affix 为true的话是固定在tags-view中，不能关闭
+       */
+      isAffix: (tag: TagView) => {
+        return tag.meta && tag.meta.affix
+      },
+      // 刷新
+      refreshSelectedTag: (view: TagView) => {
+        store.dispatch('tagsView/delCachedView', view)
+        const { fullPath } = view
+        nextTick(() => {
+          router.replace({ path: '/redirect' + fullPath }).catch(err => {
+            console.warn(err)
+          })
+        })
+      },
+      // 关闭
+      closeSelectedTag: (view: TagView) => {
+        store.dispatch('tagsView/delView', view)
+        if (state.isActive(view)) {
+          toLastView(store.state.tagsView.visitedViews, view)
+        }
+      },
+      // 关闭其它
+      closeOthersTags: () => {
+        if (state.selectedTag.fullPath !== currentRoute.path && state.selectedTag.fullPath !== undefined) {
+          router.push(state.selectedTag.fullPath).catch(err => {
+            console.log(err)
+          })
+        }
+        store.dispatch('tagsView/delOtherView', state.selectedTag as TagView)
+      },
+      // 关闭所有
+      closeAllTags: (view: TagView) => {
+        store.dispatch('tagsView/delAllViews', undefined)
+        if (state.affixTags.some(tag => tag.path === currentRoute.path)) {
+          return
+        }
+        toLastView(store.state.tagsView.visitedViews, view)
+      },
+      // 右键点击事件
+      openMenu: (tag: TagView, e: MouseEvent) => {
+        const menuMinWidth = 105
+        const offsetLeft = proxy.$el.getBoundingClientRect().left // container margin left
+        const offsetWidth = proxy.$el.offsetWidth // container width
+        const maxLeft = offsetWidth - menuMinWidth // left boundary
+        const left = e.clientX - offsetLeft + 15 // 15: margin right
+        if (left > maxLeft) {
+          state.left = maxLeft
+        } else {
+          state.left = left
+        }
+        state.top = e.clientY
+        // 显示右键点击操作
+        state.visible = true
+        state.selectedTag = tag
+      },
+      closeMenu: () => {
+        state.visible = false
+      },
+      handleScroll: () => {
+        state.closeMenu()
+      }
+    })
+
+    const visitedViews = computed(() => {
+      return store.state.tagsView.visitedViews
+    })
+    // 权限路由控制在这里处理，现在取的是公共路由
+    const routes = computed(() => constantRoutes)
+
+    // 初始化递归获取路由表中affix配置为true的路由
+    const filterAffixTags = (routes: RouteRecordRaw[], basePath = '/') => {
+      let tags: TagView[] = []
+
+      routes.forEach(route => {
+        /**
+         * @affix 路由表设置为true，它则会固定在tags-view中(默认 false)
+         */
+        if (route.meta && route.meta.affix) {
+          // const tagPath = path.resolve(basePath, route.path)
+          const tagPath = route.path
+          tags.push({
+            fullPath: tagPath,
+            path: tagPath,
+            name: route.name,
+            meta: { ...route.meta }
+          })
+        }
+
+        if (route.children) {
+          const childTags = filterAffixTags(route.children, route.path)
+          if (childTags.length >= 1) {
+            tags = tags.concat(childTags)
+          }
+        }
+      })
+      return tags
+    }
+
+    // 初始化tags
+    const initTags = () => {
+      state.affixTags = filterAffixTags(routes.value)
+      for (const tag of state.affixTags) {
+        // Must have tag name
+        if (tag.name) {
+          store.dispatch('tagsView/addVisitedView', tag as TagView)
+        }
+      }
+    }
+
+    // 新增tags
+    const addTags = () => {
+      if (currentRoute.name) {
+        // console.log(currentRoute, 'currentRoute')
+        /**
+         * 重新赋值新对象的原因，解决如下警告
+         * Avoid app logic that relies on enumerating keys on a component instance. The keys will be empty in production mode to avoid performance overhead. 
+         * 引起警告的来源 matched
+         */
+        let { fullPath, hash, meta, name, params, path, query, redirectedFrom } = currentRoute
+        let current = {
+          fullPath,
+          hash,
+          // matched: currentRoute.matched,
+          meta,
+          name,
+          params,
+          path,
+          query,
+          redirectedFrom
+        }
+        store.dispatch('tagsView/addView', current)
+      }
+      return false
+    }
+
+    const moveToCurrentTag = () => {
+      const tags = instance?.refs.tag as any[]
+      nextTick(() => {
+        if (tags === null || tags === undefined || !Array.isArray(tags)) { return }
+        for (const tag of tags) {
+          if ((tag.to as TagView).path === currentRoute.path) {
+            (scrollPaneRef.value as any).moveToCurrentTag(tag)
+            // When query is different then update
+            if ((tag.to as TagView).fullPath !== currentRoute.fullPath) {
+              store.dispatch('tagsView/updateVisitedView', currentRoute)
+            }
+          }
+        }
+      })
+    }
+
+    // 监听路由，新增tags和更新tags
+    watch(() => currentRoute.name, () => {
+      if (currentRoute.name !== 'Login') {
+        addTags()
+        moveToCurrentTag()
+      }
+    })
+
+    watch(() => state.visible, (value) => {
+      if (value) {
+        document.body.addEventListener('click', state.closeMenu)
+      } else {
+        document.body.removeEventListener('click', state.closeMenu)
+      }
+    })
+
+    // life cricle
+    onBeforeMount(() => {
+      initTags()
+      addTags()
+    })
+
+    return {
+      visitedViews,
+      routes,
+      scrollPaneRef,
+      ...toRefs(state)
+    }
+  }
+})
+</script>
+<style lang="scss" scoped>
+// Reset element css of el-icon-close
+.tags-view-wrapper {
+  .tags-view-item {
+    .el-icon-close {
+      width: 16px;
+      height: 16px;
+      vertical-align: 2px;
+      border-radius: 50%;
+      text-align: center;
+      transition: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
+      transform-origin: 100% 50%;
+
+      &:before {
+        transform: scale(0.6);
+        display: inline-block;
+        vertical-align: -3px;
+      }
+
+      &:hover {
+        background-color: #b4bccc;
+        color: #fff;
+      }
+    }
+  }
+}
+</style>
+<style lang="scss" scoped>
+.tags-view-container {
+  height: 50px;
+  line-height: 50px;
+  width: 100%;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+
+  .tags-view-wrapper {
+    .tags-view-item {
+      display: inline-block;
+      position: relative;
+      cursor: pointer;
+      height: 26px;
+      line-height: 25px;
+      border: 1px solid rgba(124, 141, 181, 0.3);
+      border-radius: 4px;
+      color: #495060;
+      background: #fff;
+      padding: 0 8px;
+      font-size: 12px;
+      margin-left: 5px;
+      margin-top: 4px;
+      box-sizing: border-box;
+
+      &:first-of-type {
+        margin-left: 15px;
+      }
+
+      &:last-of-type {
+        margin-right: 15px;
+      }
+
+      &.active {
+        background-color: #409eff;
+        color: #fff;
+      }
+    }
+  }
+
+  .contextmenu {
+    margin: 0;
+    background: #fff;
+    z-index: 3000;
+    position: absolute;
+    list-style-type: none;
+    padding: 5px 0;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 400;
+    color: #333;
+    box-shadow: 0 0 10px rgba(0,0,0,0.2); 
+    li {
+      margin: 0;
+      padding: 7px 16px;
+      cursor: pointer;
+      line-height: 20px;
+
+      &:hover {
+        background: #409eff;
+        color: #fff;
+      }
+    }
+  }
+}
+</style>

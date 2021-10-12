@@ -1,0 +1,7 @@
+// 日期格式自适应宽度 el-date-picker
+.el-date-editor--daterange.el-input__inner {
+  width: auto;
+}
+.el-date-editor .el-range-separator {
+  width: 20px;
+}

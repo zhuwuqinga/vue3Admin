@@ -1,0 +1,9 @@
+export { default as CustomerDetails } from './CustomerDetails.vue' // 商户查询-详情
+export { default as CustomerEdit } from './CustomerEdit.vue' // 商户查询-编辑
+export { default as CouponConsumpRecord } from './CouponConsumpRecord.vue' // 商户优惠券-消费记录
+export { default as ActivationDetails } from './ActivationDetails.vue' // 商户激活查询-详情
+export { default as SettlementDetails } from './SettlementDetails.vue' // 结算变更查询-详情
+export { default as RateChange } from './RateChange.vue' // 费率变更查询-费率变更
+export { default as BatchRateChange } from './BatchRateChange.vue' // 费率变更查询-批量修改费率
+export { default as ApplyDetails } from './ApplyDetails.vue' // 商户入网修改-详情
+export { default as FlowCardDetails } from './FlowCardDetails.vue' // 商户流量卡查询-详情
